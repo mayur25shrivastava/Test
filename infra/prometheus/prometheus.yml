@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: booking-service        # DNS lookup returns every replica, so scaled instances are all scraped
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: [booking-service]
+        type: A
+        port: 8081
+  - job_name: providers
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["flight-service:8090", "hotel-service:8090", "cab-service:8090"]
+  - job_name: api-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["api-gateway:8080"]

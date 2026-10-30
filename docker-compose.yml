@@ -1,0 +1,183 @@
+x-java-service: &java-service
+  restart: on-failure
+  depends_on:
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_started
+    service-registry:
+      condition: service_started
+  environment: &java-env
+    EUREKA_URL: http://service-registry:8761/eureka
+    KAFKA_BOOTSTRAP: kafka:9092
+    DB_HOST: postgres
+    REDIS_HOST: redis
+    OUTBOX_RELAY_ENABLED: ${OUTBOX_RELAY_ENABLED:-true}
+    MANAGEMENT_TRACING_ENABLED: ${TRACING_ENABLED:-false}   # TRACING_ENABLED=true with --profile obs
+    OTLP_ENDPOINT: http://jaeger:4318/v1/traces
+    GATEWAY_RATE: ${GATEWAY_RATE:-10}
+    GATEWAY_BURST: ${GATEWAY_BURST:-20}
+
+services:
+  postgres:
+    image: postgres:16
+    command: ["postgres", "-c", "wal_level=logical"]   # required by Debezium
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+
+  kafka:
+    image: apache/kafka:3.8.0
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  service-registry:
+    build: { context: ., args: { MODULE: service-registry } }
+    ports:
+      - "8761:8761"
+
+  api-gateway:
+    <<: *java-service
+    build: { context: ., args: { MODULE: api-gateway } }
+    ports:
+      - "8080:8080"
+
+  # Load balancing demo: docker compose up --build --scale booking-service=2
+  booking-service:
+    <<: *java-service
+    build: { context: ., args: { MODULE: booking-service } }
+    environment:
+      <<: *java-env
+      DB_NAME: booking
+
+  flight-service:
+    <<: *java-service
+    build: { context: ., args: { MODULE: provider-service } }
+    environment:
+      <<: *java-env
+      SPRING_APPLICATION_NAME: flight-service
+      PROVIDER_STEP: FLIGHT
+      PROVIDER_TOPIC: flight.commands
+      DB_NAME: flight
+
+  hotel-service:
+    <<: *java-service
+    build: { context: ., args: { MODULE: provider-service } }
+    environment:
+      <<: *java-env
+      SPRING_APPLICATION_NAME: hotel-service
+      PROVIDER_STEP: HOTEL
+      PROVIDER_TOPIC: hotel.commands
+      DB_NAME: hotel
+
+  cab-service:
+    <<: *java-service
+    build: { context: ., args: { MODULE: provider-service } }
+    environment:
+      <<: *java-env
+      SPRING_APPLICATION_NAME: cab-service
+      PROVIDER_STEP: CAB
+      PROVIDER_TOPIC: cab.commands
+      DB_NAME: cab
+
+  ai-service:
+    build: ./ai-service
+    restart: on-failure
+    depends_on:
+      - redis
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}   # auto | groq | gemini | ollama | mock
+      LLM_MODEL: ${LLM_MODEL:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      REDIS_URL: redis://redis:6379/0
+      BOOKING_URL: http://api-gateway:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets the container reach Ollama running on your machine
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+
+  # ---- Observability: TRACING_ENABLED=true docker compose --profile obs up --build ----
+  prometheus:
+    profiles: ["obs"]
+    image: prom/prometheus:v2.55.0
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    profiles: ["obs"]
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3001:3000"
+
+  jaeger:
+    profiles: ["obs"]
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+
+  # ---- CDC mode: OUTBOX_RELAY_ENABLED=false docker compose --profile cdc up --build ----
+  connect:
+    profiles: ["cdc"]
+    image: quay.io/debezium/connect:2.7
+    depends_on:
+      - kafka
+      - postgres
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+
+  debezium-init:
+    profiles: ["cdc"]
+    image: curlimages/curl:8.10.1
+    depends_on:
+      - connect
+    volumes:
+      - ./infra/debezium/register.sh:/register.sh
+    entrypoint: ["sh", "/register.sh"]

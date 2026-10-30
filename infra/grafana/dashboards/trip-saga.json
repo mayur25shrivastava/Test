@@ -1,0 +1,208 @@
+{
+ "title": "Trip Saga",
+ "uid": "trip-saga",
+ "schemaVersion": 39,
+ "refresh": "5s",
+ "time": {
+  "from": "now-15m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "Bookings accepted per second (by status)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(http_server_requests_seconds_count{job=\"booking-service\",method=\"POST\",uri=\"/bookings\"}[1m])) by (status)",
+     "refId": "A",
+     "legendFormat": "{{status}}{{outcome}}{{httpStatusCode}}{{step}}{{job}}"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Saga outcomes per second",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(saga_completed_total[1m])) by (outcome)",
+     "refId": "A",
+     "legendFormat": "{{status}}{{outcome}}{{httpStatusCode}}{{step}}{{job}}"
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Saga duration p95 (end to end)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "expr": "histogram_quantile(0.95, sum(rate(saga_duration_seconds_bucket[1m])) by (le, outcome))",
+     "refId": "A",
+     "legendFormat": "{{status}}{{outcome}}{{httpStatusCode}}{{step}}{{job}}"
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "type": "timeseries",
+   "title": "Gateway requests per second (by status)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(spring_cloud_gateway_requests_seconds_count[1m])) by (httpStatusCode)",
+     "refId": "A",
+     "legendFormat": "{{status}}{{outcome}}{{httpStatusCode}}{{step}}{{job}}"
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Step failures per second",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 16,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(saga_step_failed_total[1m])) by (step)",
+     "refId": "A",
+     "legendFormat": "{{status}}{{outcome}}{{httpStatusCode}}{{step}}{{job}}"
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Saga timeouts (last 5 min)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 16,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "expr": "sum(increase(saga_timeouts_total[5m]))",
+     "refId": "A",
+     "legendFormat": "{{status}}{{outcome}}{{httpStatusCode}}{{step}}{{job}}"
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "JVM heap used",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 24,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "expr": "sum(jvm_memory_used_bytes{area=\"heap\"}) by (job)",
+     "refId": "A",
+     "legendFormat": "{{status}}{{outcome}}{{httpStatusCode}}{{step}}{{job}}"
+    }
+   ]
+  }
+ ]
+}

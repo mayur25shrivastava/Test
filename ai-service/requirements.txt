@@ -1,0 +1,12 @@
+# Ranges on purpose: after your first successful install run `pip freeze` and pin exact versions.
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30
+pydantic>=2.7,<3
+httpx>=0.27
+redis>=5.0
+langgraph>=0.4,<2
+langchain-core>=0.3
+langchain-groq>=0.3
+langchain-google-genai>=2.0
+langchain-ollama>=0.3
+pytest>=8

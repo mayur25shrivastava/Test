@@ -1,0 +1,96 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: api-gateway
+  reactor:
+    context-propagation: auto
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+  cloud:
+    gateway:
+      routes:
+        - id: booking-service
+          uri: lb://booking-service          # client-side load balancing via Eureka
+          predicates:
+            - Path=/api/bookings/**
+          filters:
+            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@ipKeyResolver}"
+                redis-rate-limiter.replenishRate: ${GATEWAY_RATE:10}
+                redis-rate-limiter.burstCapacity: ${GATEWAY_BURST:20}
+            - name: CircuitBreaker
+              args:
+                name: bookingCB
+                fallbackUri: forward:/fallback/bookings
+        - id: booking-admin
+          uri: lb://booking-service
+          predicates:
+            - Path=/api/admin/**
+          filters:
+            - StripPrefix=1
+        # SSE streams are long-lived: no CircuitBreaker/TimeLimiter here, or they would be cut after 3s
+        - id: booking-stream
+          uri: lb://booking-service
+          predicates:
+            - Path=/api/stream/**
+          filters:
+            - StripPrefix=1
+        # AI planner (Python/LangGraph): slower, so its own breaker + stricter rate limit to protect free LLM quotas
+        - id: ai-planner
+          uri: http://ai-service:8000
+          predicates:
+            - Path=/api/plans/**
+          filters:
+            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@ipKeyResolver}"
+                redis-rate-limiter.replenishRate: 2
+                redis-rate-limiter.burstCapacity: 5
+            - name: CircuitBreaker
+              args:
+                name: aiCB
+                fallbackUri: forward:/fallback/plans
+resilience4j:
+  circuitbreaker:
+    instances:
+      bookingCB:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+      aiCB:
+        slidingWindowSize: 6
+        minimumNumberOfCalls: 3
+        failureRateThreshold: 50
+        waitDurationInOpenState: 15s
+        permittedNumberOfCallsInHalfOpenState: 2
+  timelimiter:
+    instances:
+      bookingCB:
+        timeoutDuration: 3s
+      aiCB:
+        timeoutDuration: 45s
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers,prometheus
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTLP_ENDPOINT:http://jaeger:4318/v1/traces}
